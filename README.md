@@ -312,6 +312,7 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 - [需求分析文档](需求分析文档.md)
 - [技术栈文档](技术栈文档.md)
 - [详细设计文档](详细设计文档.md)
+- [第 4 周：植物数据结构](docs/第4周-植物数据结构.md)
 - [第 5 周：L-System 植物骨架生成](docs/第5周-L-System植物骨架生成.md)
 - [第 6 周：Metaball 隐式曲面](docs/第6周-Metaball隐式曲面.md)
 - [第 7 周：Marching Cubes 网格提取](docs/第7周-MarchingCubes网格提取.md)
