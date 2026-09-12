@@ -317,3 +317,4 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 - [第 11 周：向光性与向地性](docs/第11周-向光性与向地性.md)
 - [第 12 周：生长数据记录与回放](docs/第12周-生长数据记录与回放.md)
 - [第 13 周：植物物理模型](docs/第13周-植物物理模型.md)
+- [第 14 周：交互式编辑](docs/week14-report.md)
