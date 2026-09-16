@@ -14,6 +14,7 @@ PlantSim 将程序化植物建模、环境约束和生长过程记录整合为�
 - **交互控制台**：Vue 3 前端提供生长时间轴、播放速度、阶段跳转、指标卡片、SVG 曲线、JSON / CSV 指标导出和离线回放回退。
 - **引擎互联**：Qt WebSocket 服务监听 `ws://127.0.0.1:4317`，在 C++ 引擎与浏览器控制台之间传输环境、播放控制和生长指标数据。
 - **PBD 植物物理（第 13 周）**：每个植物节点对应一个质量点，对枝干长度、弯曲和分枝夹角进行位置约束求解；提供固定根节点、风力驱动、误差统计与 OpenGL 调试可视化。
+- **交互式编辑（第 14 周）**：射线拾取与节点选择，缩放 / 弯曲 / 旋转 / 参数四类编辑工具，编辑后自动重建 PBD、Metaball 与网格，并支持撤销、重置和 WebSocket 状态同步。
 
 ## 系统架构
 
@@ -180,10 +181,22 @@ plantState: PlantModel::toJson() 完整快照
 │   ├── src/App.vue                    # 生长数据实验台 UI
 │   ├── src/components/PlantViewport.vue
 │   └── scripts/websocket-smoke.mjs
-├── docs/                              # 第 4 周至第 12 周周报
+├── docs/                              # 第 4 周至第 14 周周报及后续开发计划
 ├── examples/                          # 示例骨架、网格和导出物
 └── schemas/                           # JSON Schema
 ```
+
+## 示例数据与 Schema
+
+`examples/` 提供可直接查看的示例产物，`schemas/` 给出对应的 JSON Schema，便于校验导出结果：
+
+| 数据 | 示例 | Schema |
+| --- | --- | --- |
+| 植物骨架 | `plant_skeleton.json`、`lsystem_*.json` | `plant_skeleton.schema.json` |
+| Metaball 场摘要 | `metaball_cherry_field.json`、`metaball_cherry_slice.*` | `metaball_field_summary.schema.json` |
+| Marching Cubes 网格 | `marching_cubes_cherry_mesh.json`、`marching_cubes_cherry.obj` | `marching_cubes_mesh.schema.json` |
+| 植物模型导出 | `plant_cherry_export.json`、`plant_cherry_lod*.obj/.mtl` | `plant_model_export.schema.json` |
+| 生长时间轴 | `growth_timeline_*.json`、`growth_report_*.json` | `growth_timeline.schema.json` |
 
 ## 环境与构建
 
@@ -306,12 +319,14 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 | 第 11 周 | 向光性与向地性 | 多光源、遮挡近似、环境向性控制 |
 | 第 12 周 | 生长数据记录与回放 | 完整状态帧、时间轴回放、指标曲线、数据导出 |
 | 第 13 周 | 植物物理模型 | 质量点、长度/弯曲/夹角约束、调试模式 |
+| 第 14 周 | 交互式编辑 | 射线拾取、缩放/弯曲/旋转/参数工具、网格重建、撤销与重置 |
 
 ## 文档
 
 - [需求分析文档](需求分析文档.md)
 - [技术栈文档](技术栈文档.md)
 - [详细设计文档](详细设计文档.md)
+- [第 14–24 周：项目开发进度计划](docs/项目开发进度计划.md)
 - [第 4 周：植物数据结构](docs/第4周-植物数据结构.md)
 - [第 5 周：L-System 植物骨架生成](docs/第5周-L-System植物骨架生成.md)
 - [第 6 周：Metaball 隐式曲面](docs/第6周-Metaball隐式曲面.md)
