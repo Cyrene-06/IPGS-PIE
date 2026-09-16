@@ -5,23 +5,16 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QTextStream>
 
 #include <algorithm>
 
 namespace {
 
-bool saveMtl(const QString& mtlPath,
-             const std::vector<ObjMaterial>& materials,
-             QString* error) {
-    QFile file(mtlPath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        if (error) {
-            *error = QStringLiteral("Cannot write MTL: %1").arg(mtlPath);
-        }
-        return false;
-    }
-    QTextStream stream(&file);
+QString buildMtl(const std::vector<ObjMaterial>& materials) {
+    QString result;
+    QTextStream stream(&result);
     stream.setRealNumberNotation(QTextStream::FixedNotation);
     stream.setRealNumberPrecision(4);
     stream << "# PlantSim materials\n";
@@ -43,46 +36,40 @@ bool saveMtl(const QString& mtlPath,
         }
         stream << '\n';
     }
-    return true;
+    return result;
 }
 
 } // namespace
 
-bool MeshExporter::saveObj(const QString& objPath,
-                           const std::vector<ObjMaterial>& materials,
-                           const std::vector<ObjMeshGroup>& groups,
-                           QString* error) {
-    if (materials.empty()) {
-        if (error) {
-            *error = QStringLiteral("At least one material is required.");
-        }
+bool MeshExporter::serializeObj(const QString& baseName,
+                                const std::vector<ObjMaterial>& materials,
+                                const std::vector<ObjMeshGroup>& groups,
+                                QString* objText,
+                                QString* mtlText,
+                                QString* error) {
+    if (!objText || !mtlText) {
+        if (error) *error = QStringLiteral("OBJ and MTL output pointers are required.");
         return false;
     }
-    const QFileInfo objInfo(objPath);
-    const QString mtlPath = objInfo.absolutePath() + QStringLiteral("/") +
-                            objInfo.completeBaseName() + QStringLiteral(".mtl");
-    if (!saveMtl(mtlPath, materials, error)) {
+    if (materials.empty()) {
+        if (error) *error = QStringLiteral("At least one material is required.");
         return false;
     }
 
-    QFile file(objPath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        if (error) {
-            *error = QStringLiteral("Cannot write OBJ: %1").arg(objPath);
-        }
-        return false;
-    }
-    QTextStream stream(&file);
+    QString obj;
+    QTextStream stream(&obj);
     stream.setRealNumberNotation(QTextStream::FixedNotation);
     stream.setRealNumberPrecision(6);
+    const QString normalizedBaseName = baseName.trimmed().isEmpty()
+        ? QStringLiteral("plantsim_scene") : baseName.trimmed();
     stream << "# PlantSim plant model\n"
-           << "mtllib " << objInfo.completeBaseName() << ".mtl\n";
+           << "mtllib " << normalizedBaseName << ".mtl\n";
 
     std::uint32_t vertexOffset = 0;
+    bool wroteMesh = false;
     for (const ObjMeshGroup& group : groups) {
-        if (!group.mesh || !group.mesh->isValid()) {
-            continue;
-        }
+        if (!group.mesh || !group.mesh->isValid()) continue;
+        wroteMesh = true;
         const SurfaceMesh& mesh = *group.mesh;
         stream << "g " << (group.comment.isEmpty() ? QStringLiteral("mesh")
                                                     : group.comment) << '\n';
@@ -92,8 +79,6 @@ bool MeshExporter::saveObj(const QString& objPath,
         for (const Vec3& n : mesh.normals) {
             stream << "vn " << n.x() << ' ' << n.y() << ' ' << n.z() << '\n';
         }
-
-        // 按材质连续段输出 usemtl，避免每个三角形一行。
         int activeMaterial = -1;
         const std::size_t triangleCount = mesh.indices.size() / 3;
         for (std::size_t tri = 0; tri < triangleCount; ++tri) {
@@ -115,6 +100,43 @@ bool MeshExporter::saveObj(const QString& objPath,
                    << c << "//" << c << '\n';
         }
         vertexOffset += static_cast<std::uint32_t>(mesh.positions.size());
+    }
+    if (!wroteMesh) {
+        if (error) *error = QStringLiteral("No valid mesh group is available for OBJ export.");
+        return false;
+    }
+    *objText = std::move(obj);
+    *mtlText = buildMtl(materials);
+    return true;
+}
+
+bool MeshExporter::saveObj(const QString& objPath,
+                           const std::vector<ObjMaterial>& materials,
+                           const std::vector<ObjMeshGroup>& groups,
+                           QString* error) {
+    const QFileInfo objInfo(objPath);
+    const QString mtlPath = objInfo.absolutePath() + QStringLiteral("/") +
+                            objInfo.completeBaseName() + QStringLiteral(".mtl");
+    QString objText;
+    QString mtlText;
+    if (!serializeObj(objInfo.completeBaseName(), materials, groups,
+                      &objText, &mtlText, error)) {
+        return false;
+    }
+
+    QSaveFile mtlFile(mtlPath);
+    if (!mtlFile.open(QIODevice::WriteOnly | QIODevice::Text) ||
+        mtlFile.write(mtlText.toUtf8()) < 0 || !mtlFile.commit()) {
+        if (error) *error = QStringLiteral("Cannot write MTL: %1").arg(mtlPath);
+        return false;
+    }
+
+    QSaveFile objFile(objPath);
+    if (!objFile.open(QIODevice::WriteOnly | QIODevice::Text) ||
+        objFile.write(objText.toUtf8()) < 0 || !objFile.commit()) {
+        if (error) *error = QStringLiteral("Cannot write OBJ: %1").arg(objPath);
+        QFile::remove(mtlPath);
+        return false;
     }
     return true;
 }

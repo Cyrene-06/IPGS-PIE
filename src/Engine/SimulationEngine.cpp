@@ -9,9 +9,107 @@
 #include <utility>
 
 #include <QDebug>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QSaveFile>
 
 #include "Algorithm/TurtleInterpreter.h"
+#include "Geometry/LeafGenerator.h"
+#include "Geometry/MeshExporter.h"
+
+namespace {
+
+void setPersistenceError(QString* error, const QString& value) {
+    if (error) *error = value;
+}
+
+bool saveJsonObject(const QString& filePath, const QJsonObject& object, QString* error) {
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        setPersistenceError(error, QStringLiteral("Cannot open %1 for writing: %2")
+                                       .arg(filePath, file.errorString()));
+        return false;
+    }
+    const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    if (file.write(bytes) != bytes.size() || !file.commit()) {
+        setPersistenceError(error, QStringLiteral("Cannot save %1: %2")
+                                       .arg(filePath, file.errorString()));
+        return false;
+    }
+    return true;
+}
+
+bool loadJsonObject(const QString& filePath, QJsonObject* object, QString* error) {
+    if (!object) {
+        setPersistenceError(error, QStringLiteral("JSON output pointer is null."));
+        return false;
+    }
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        setPersistenceError(error, QStringLiteral("Cannot open %1: %2")
+                                       .arg(filePath, file.errorString()));
+        return false;
+    }
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        setPersistenceError(error, QStringLiteral("Invalid JSON in %1: %2")
+                                       .arg(filePath, parseError.errorString()));
+        return false;
+    }
+    *object = document.object();
+    return true;
+}
+
+std::vector<ObjMaterial> sceneMaterials() {
+    std::vector<ObjMaterial> materials;
+    ObjMaterial bark;
+    bark.name = QStringLiteral("bark");
+    bark.diffuse = Vec3(0.45f, 0.30f, 0.20f);
+    bark.specular = Vec3(0.05f, 0.04f, 0.03f);
+    bark.shininess = 8.0f;
+    materials.push_back(bark);
+
+    const Vec3 leafColors[] = {
+        Vec3(0.30f, 0.52f, 0.26f), Vec3(0.40f, 0.60f, 0.29f),
+        Vec3(0.26f, 0.45f, 0.23f), Vec3(0.48f, 0.64f, 0.32f)
+    };
+    for (int index = 0; index < 4; ++index) {
+        ObjMaterial leaf;
+        leaf.name = QStringLiteral("leaf_%1").arg(index);
+        leaf.diffuse = leafColors[index];
+        leaf.specular = Vec3(0.10f, 0.12f, 0.08f);
+        leaf.shininess = 24.0f;
+        leaf.doubleSided = true;
+        materials.push_back(leaf);
+    }
+    return materials;
+}
+
+GeneratedLeaves generateSceneLeaves(const PlantModel& plant) {
+    LeafGenerationSettings settings;
+    settings.seed = 20260816u;
+    return LeafGenerator::generate(plant, settings);
+}
+
+std::vector<std::uint16_t> globalLeafMaterials(const GeneratedLeaves& leaves) {
+    std::vector<std::uint16_t> result = leaves.faceMaterials;
+    for (std::uint16_t& material : result) ++material;
+    return result;
+}
+
+SurfaceMesh exportBranchMesh(const PlantModel& plant,
+                             const MetaballFieldSettings& settings,
+                             const SurfaceMesh& current) {
+    if (current.isValid()) return current;
+    MetaballField field;
+    field.rebuildFromPlant(plant, settings);
+    return MarchingCubes::extract(field.sampleGrid(0.08f, 2000000), field.isoThreshold());
+}
+
+}  // namespace
 
 SimulationEngine::SimulationEngine(QObject* parent)
     : QObject(parent) {
@@ -173,17 +271,24 @@ void SimulationEngine::setGrowthSpeed(float speed) {
 void SimulationEngine::stepGrowth(float deltaYears) { growthClock_.stepOnce(deltaYears); }
 
 void SimulationEngine::seekGrowth(float age) {
+    QString error;
+    if (!restoreRecordedScene(age, &error)) {
+        emit growthLogMessage(QStringLiteral("Replay restore failed: %1").arg(error));
+    }
+}
+
+bool SimulationEngine::restoreRecordedScene(float age, QString* error) {
     const GrowthDataFrame* frame = growthData_.nearestSnapshot(std::max(0.0f, age));
     if (!frame) {
-        growthClock_.reset(std::max(0.0f, age));
-        return;
+        setPersistenceError(error, QStringLiteral("No recorded plant snapshot is available."));
+        return false;
     }
     growthClock_.pause();
     PlantModel restored;
-    QString error;
-    if (!PlantModel::fromJson(frame->plantState, &restored, &error)) {
-        emit growthLogMessage(QStringLiteral("Replay restore failed: %1").arg(error));
-        return;
+    QString plantError;
+    if (!PlantModel::fromJson(frame->plantState, &restored, &plantError)) {
+        setPersistenceError(error, plantError);
+        return false;
     }
     restoringRecordedFrame_ = true;
     plantModel_ = std::move(restored);
@@ -199,6 +304,7 @@ void SimulationEngine::seekGrowth(float age) {
     emit plantSurfaceUpdated(plantSurface_);
     emit growthUpdated(buildReport(growthClock_.timeline().sample(frame->age), true));
     emit growthLogMessage(QStringLiteral("Replay seek -> %1y").arg(frame->age, 0, 'f', 2));
+    return true;
 }
 
 void SimulationEngine::jumpToGrowthStage(const QString& stage) {
@@ -332,6 +438,218 @@ bool SimulationEngine::saveGrowthData(const QString& filePath, QString* error) c
 
 bool SimulationEngine::saveGrowthMetricsCsv(const QString& filePath, QString* error) const {
     return growthData_.saveCsv(filePath, error);
+}
+
+QJsonObject SimulationEngine::createPreset() const {
+    return QJsonObject{
+        {QStringLiteral("schema"), QStringLiteral("plantsim.preset")},
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("plantProgram"), plantProgram_},
+        {QStringLiteral("plant"), plantModel_.toJson()},
+        {QStringLiteral("initialPlant"), initialPlantSnapshot_},
+        {QStringLiteral("environment"), environment_.toJson()},
+        {QStringLiteral("growthTimeline"), growthClock_.timeline().toJson()},
+        {QStringLiteral("physics"), QJsonObject{
+             {QStringLiteral("enabled"), physicsEnabled_},
+             {QStringLiteral("debugEnabled"), physicsDebugEnabled_}}}
+    };
+}
+
+bool SimulationEngine::applyPreset(const QJsonObject& preset, QString* error) {
+    if (preset.value(QStringLiteral("schema")).toString() != QStringLiteral("plantsim.preset") ||
+        preset.value(QStringLiteral("version")).toInt(-1) != 1) {
+        setPersistenceError(error, QStringLiteral("Unsupported or missing preset schema."));
+        return false;
+    }
+
+    PlantModel plant;
+    EnvironmentParams environment;
+    GrowthTimeline timeline;
+    QString validationError;
+    if (!PlantModel::fromJson(preset.value(QStringLiteral("plant")).toObject(),
+                              &plant, &validationError)) {
+        setPersistenceError(error, QStringLiteral("Preset plant is invalid: %1").arg(validationError));
+        return false;
+    }
+    if (!EnvironmentParams::fromJson(preset.value(QStringLiteral("environment")).toObject(),
+                                     &environment, &validationError)) {
+        setPersistenceError(error, QStringLiteral("Preset environment is invalid: %1").arg(validationError));
+        return false;
+    }
+    if (!GrowthTimeline::fromJson(preset.value(QStringLiteral("growthTimeline")).toObject(),
+                                  &timeline, &validationError)) {
+        setPersistenceError(error, QStringLiteral("Preset timeline is invalid: %1").arg(validationError));
+        return false;
+    }
+    QJsonObject initialSnapshot = preset.value(QStringLiteral("initialPlant")).toObject();
+    if (!initialSnapshot.isEmpty()) {
+        PlantModel initialPlant;
+        if (!PlantModel::fromJson(initialSnapshot, &initialPlant, &validationError)) {
+            setPersistenceError(error, QStringLiteral("Preset initial plant is invalid: %1").arg(validationError));
+            return false;
+        }
+    } else {
+        initialSnapshot = plant.toJson();
+    }
+
+    restoringRecordedFrame_ = true;
+    growthClock_.pause();
+    plantModel_ = std::move(plant);
+    environment_ = std::move(environment);
+    plantProgram_ = preset.value(QStringLiteral("plantProgram")).toString();
+    initialPlantSnapshot_ = std::move(initialSnapshot);
+    timeline.reset(plantModel_.age);
+    timeline.setMode(GrowthPlaybackMode::Paused);
+    growthClock_.timeline() = timeline;
+    growthClock_.setSpeed(timeline.speed());
+    const QJsonObject physics = preset.value(QStringLiteral("physics")).toObject();
+    physicsEnabled_ = physics.value(QStringLiteral("enabled")).toBool(false);
+    physicsDebugEnabled_ = physics.value(QStringLiteral("debugEnabled")).toBool(false);
+    environment_.time = plantModel_.age;
+    dynamicBranching_.reset();
+    growthEvents_.clear();
+    keyframes_.clear();
+    growthData_.clear();
+    editHistory_.clear();
+    nextAutoKeyframeAge_ = std::floor(plantModel_.age) + 1.0f;
+    rebuildPhysicsModel();
+    rebuildMetaballField();
+    rebuildPlantSurface();
+    growthData_.capture(plantModel_, true);
+    restoringRecordedFrame_ = false;
+    ++editRevision_;
+
+    emit environmentUpdated(environment_.lightIntensity);
+    emit tropismUpdated(environment_.phototropismWeight, environment_.gravitropismWeight);
+    emit plantSurfaceUpdated(plantSurface_);
+    emitPhysicsDebugSnapshot();
+    emit growthUpdated(buildReport(growthClock_.timeline().sample(plantModel_.age), true));
+    emit growthLogMessage(QStringLiteral("Preset loaded at %1y").arg(plantModel_.age, 0, 'f', 2));
+    return true;
+}
+
+bool SimulationEngine::savePreset(const QString& filePath, QString* error) const {
+    return saveJsonObject(filePath, createPreset(), error);
+}
+
+bool SimulationEngine::loadPreset(const QString& filePath, QString* error) {
+    QJsonObject object;
+    return loadJsonObject(filePath, &object, error) && applyPreset(object, error);
+}
+
+QJsonObject SimulationEngine::createSceneArchive() const {
+    return QJsonObject{
+        {QStringLiteral("schema"), QStringLiteral("plantsim.scene")},
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("preset"), createPreset()},
+        {QStringLiteral("recording"), growthData_.toJson()},
+        {QStringLiteral("events"), growthEvents_.toJson()},
+        {QStringLiteral("keyframes"), keyframes_.toJson()},
+        {QStringLiteral("state"), QJsonObject{
+             {QStringLiteral("age"), growthClock_.timeline().currentAge()},
+             {QStringLiteral("playbackMode"), toString(growthClock_.timeline().mode())},
+             {QStringLiteral("speed"), growthClock_.timeline().speed()},
+             {QStringLiteral("editRevision"), static_cast<qint64>(editRevision_)},
+             {QStringLiteral("meshVersion"), static_cast<qint64>(meshVersion_)}}}
+    };
+}
+
+bool SimulationEngine::restoreSceneArchive(const QJsonObject& archive, float restoreAge,
+                                           QString* error) {
+    if (archive.value(QStringLiteral("schema")).toString() != QStringLiteral("plantsim.scene") ||
+        archive.value(QStringLiteral("version")).toInt(-1) != 1) {
+        setPersistenceError(error, QStringLiteral("Unsupported or missing scene archive schema."));
+        return false;
+    }
+    GrowthDataRecorder recording;
+    GrowthEventManager events;
+    GrowthKeyframeStore keyframes;
+    QString validationError;
+    if (!GrowthDataRecorder::fromJson(archive.value(QStringLiteral("recording")).toObject(),
+                                      &recording, &validationError) ||
+        !GrowthEventManager::fromJson(archive.value(QStringLiteral("events")).toArray(),
+                                      &events, &validationError) ||
+        !GrowthKeyframeStore::fromJson(archive.value(QStringLiteral("keyframes")).toObject(),
+                                       &keyframes, &validationError)) {
+        setPersistenceError(error, QStringLiteral("Scene history is invalid: %1").arg(validationError));
+        return false;
+    }
+    if (!applyPreset(archive.value(QStringLiteral("preset")).toObject(), error)) return false;
+
+    growthData_ = std::move(recording);
+    growthEvents_ = std::move(events);
+    keyframes_ = std::move(keyframes);
+    const QJsonObject state = archive.value(QStringLiteral("state")).toObject();
+    if (restoreAge >= 0.0f && !restoreRecordedScene(restoreAge, error)) return false;
+
+    const float savedSpeed = static_cast<float>(state.value(QStringLiteral("speed")).toDouble(1.0));
+    growthClock_.setSpeed(savedSpeed);
+    const qint64 archivedEditRevision = static_cast<qint64>(
+        state.value(QStringLiteral("editRevision")).toDouble(0.0));
+    const qint64 archivedMeshVersion = static_cast<qint64>(
+        state.value(QStringLiteral("meshVersion")).toDouble(0.0));
+    editRevision_ = static_cast<quint64>(std::max<qint64>(0, archivedEditRevision));
+    meshVersion_ = std::max(meshVersion_, static_cast<quint64>(
+        std::max<qint64>(0, archivedMeshVersion)));
+    if (restoreAge < 0.0f &&
+        growthPlaybackModeFromString(state.value(QStringLiteral("playbackMode")).toString()) ==
+            GrowthPlaybackMode::Realtime) {
+        growthClock_.resume();
+    } else {
+        emit growthUpdated(buildReport(
+            growthClock_.timeline().sample(growthClock_.timeline().currentAge()), true));
+    }
+    emit growthLogMessage(QStringLiteral("Scene archive restored at %1y")
+                              .arg(growthClock_.timeline().currentAge(), 0, 'f', 2));
+    return true;
+}
+
+bool SimulationEngine::saveSceneArchive(const QString& filePath, QString* error) const {
+    return saveJsonObject(filePath, createSceneArchive(), error);
+}
+
+bool SimulationEngine::loadSceneArchive(const QString& filePath, float restoreAge,
+                                        QString* error) {
+    QJsonObject object;
+    return loadJsonObject(filePath, &object, error) &&
+           restoreSceneArchive(object, restoreAge, error);
+}
+
+QJsonObject SimulationEngine::createSceneExportBundle(QString* error) const {
+    const SurfaceMesh branches = exportBranchMesh(plantModel_, metaballSettings_, plantSurface_);
+    const GeneratedLeaves leaves = generateSceneLeaves(plantModel_);
+    const std::vector<std::uint16_t> leafMaterials = globalLeafMaterials(leaves);
+    const std::vector<ObjMaterial> materials = sceneMaterials();
+    const std::vector<ObjMeshGroup> groups{
+        ObjMeshGroup{&branches, QStringLiteral("branches"), 0, nullptr},
+        ObjMeshGroup{&leaves.mesh, QStringLiteral("leaves"), 1, &leafMaterials}
+    };
+    QString obj;
+    QString mtl;
+    if (!MeshExporter::serializeObj(QStringLiteral("plantsim_scene"), materials, groups,
+                                    &obj, &mtl, error)) return {};
+    return QJsonObject{
+        {QStringLiteral("schema"), QStringLiteral("plantsim.scene_export")},
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("objFileName"), QStringLiteral("plantsim_scene.obj")},
+        {QStringLiteral("mtlFileName"), QStringLiteral("plantsim_scene.mtl")},
+        {QStringLiteral("obj"), obj},
+        {QStringLiteral("mtl"), mtl},
+        {QStringLiteral("branchTriangles"), static_cast<qint64>(branches.indices.size() / 3)},
+        {QStringLiteral("leafTriangles"), static_cast<qint64>(leaves.mesh.indices.size() / 3)}
+    };
+}
+
+bool SimulationEngine::exportSceneObj(const QString& objPath, QString* error) const {
+    const SurfaceMesh branches = exportBranchMesh(plantModel_, metaballSettings_, plantSurface_);
+    const GeneratedLeaves leaves = generateSceneLeaves(plantModel_);
+    const std::vector<std::uint16_t> leafMaterials = globalLeafMaterials(leaves);
+    const std::vector<ObjMaterial> materials = sceneMaterials();
+    const std::vector<ObjMeshGroup> groups{
+        ObjMeshGroup{&branches, QStringLiteral("branches"), 0, nullptr},
+        ObjMeshGroup{&leaves.mesh, QStringLiteral("leaves"), 1, &leafMaterials}
+    };
+    return MeshExporter::saveObj(objPath, materials, groups, error);
 }
 
 void SimulationEngine::captureGrowthFrameIfNeeded(bool forceSnapshot) {

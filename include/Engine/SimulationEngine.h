@@ -104,6 +104,22 @@ public slots:
     bool saveGrowthData(const QString& filePath, QString* error = nullptr) const;
     bool saveGrowthMetricsCsv(const QString& filePath, QString* error = nullptr) const;
 
+    // Week 16 persistence: presets retain plant/environment parameters, while
+    // scene archives additionally retain replay history and playback state.
+    QJsonObject createPreset() const;
+    bool applyPreset(const QJsonObject& preset, QString* error = nullptr);
+    bool savePreset(const QString& filePath, QString* error = nullptr) const;
+    bool loadPreset(const QString& filePath, QString* error = nullptr);
+    QJsonObject createSceneArchive() const;
+    bool restoreSceneArchive(const QJsonObject& archive, float restoreAge = -1.0f,
+                             QString* error = nullptr);
+    bool saveSceneArchive(const QString& filePath, QString* error = nullptr) const;
+    bool loadSceneArchive(const QString& filePath, float restoreAge = -1.0f,
+                          QString* error = nullptr);
+    bool restoreRecordedScene(float age, QString* error = nullptr);
+    bool exportSceneObj(const QString& objPath, QString* error = nullptr) const;
+    QJsonObject createSceneExportBundle(QString* error = nullptr) const;
+
 signals:
     void environmentUpdated(float lightIntensity);
     void tropismUpdated(float photoWeight, float graviWeight);

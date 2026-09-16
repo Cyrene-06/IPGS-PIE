@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plantsim.local/schemas/environment.schema.json",
+  "title": "PlantSim Environment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "lightDirection", "lightIntensity", "moisture", "nutrition", "temperature", "windIntensity", "time", "phototropismWeight", "gravitropismWeight", "occlusionRadius", "shadowFactor", "lightSources"],
+  "properties": {
+    "schema": { "const": "plantsim.environment" },
+    "version": { "const": 1 },
+    "lightDirection": { "$ref": "#/$defs/vec3" },
+    "lightIntensity": { "type": "number", "minimum": 0, "maximum": 1 },
+    "moisture": { "type": "number", "minimum": 0, "maximum": 1 },
+    "nutrition": { "type": "number", "minimum": 0, "maximum": 1 },
+    "temperature": { "type": "number" },
+    "windIntensity": { "type": "number", "minimum": 0 },
+    "time": { "type": "number", "minimum": 0 },
+    "phototropismWeight": { "type": "number", "minimum": 0, "maximum": 1 },
+    "gravitropismWeight": { "type": "number", "minimum": 0, "maximum": 1 },
+    "occlusionRadius": { "type": "number", "exclusiveMinimum": 0 },
+    "shadowFactor": { "type": "number", "minimum": 0, "maximum": 1 },
+    "lightSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "position", "direction", "color", "intensity", "enabled"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "type": { "enum": ["directional", "point"] },
+          "position": { "$ref": "#/$defs/vec3" },
+          "direction": { "$ref": "#/$defs/vec3" },
+          "color": { "$ref": "#/$defs/color" },
+          "intensity": { "type": "number", "minimum": 0 },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "vec3": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
+    "color": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number", "minimum": 0, "maximum": 1 } }
+  }
+}

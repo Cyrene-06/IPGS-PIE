@@ -5,6 +5,8 @@
 #pragma once
 
 #include <vector>
+#include <QJsonObject>
+#include <QString>
 #include "Common/MathTypes.h"
 
 enum class LightType {
@@ -41,6 +43,10 @@ struct EnvironmentParams {
     std::vector<LightSource> lightSources;
 
     EnvironmentParams();
+
+    QJsonObject toJson() const;
+    static bool fromJson(const QJsonObject& json, EnvironmentParams* output,
+                         QString* error = nullptr);
 
     // 计算点 position 处的加权有效光照方向矢量和总受光强度
     Vec3 calculateEffectiveLightDirection(const Vec3& position, float* outTotalIntensity = nullptr) const;

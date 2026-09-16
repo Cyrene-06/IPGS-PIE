@@ -6,6 +6,7 @@ import GrowthTimeline from './components/GrowthTimeline.vue'
 import MetricsPanel from './components/MetricsPanel.vue'
 import ReplayEventLog from './components/ReplayEventLog.vue'
 import PlantEditPanel from './components/PlantEditPanel.vue'
+import PersistencePanel from './components/PersistencePanel.vue'
 import {
   appendFrame,
   asNumber,
@@ -21,6 +22,7 @@ import {
   type Stage,
 } from './lib/growthData'
 import { downloadGrowthExport, makeGrowthExport } from './lib/growthExport'
+import { downloadJson, downloadText } from './lib/persistence'
 import { useEngineSocket } from './composables/useEngineSocket'
 
 type Tool = 'select' | 'orbit' | 'wind'
@@ -31,6 +33,7 @@ const light = ref(.8), wind = ref(.28), tool = ref<Tool>('orbit'), resetToken = 
 const logs = ref<Log[]>([])
 const editCanUndo = ref(false)
 let editRequestId = 0
+let persistenceRequestId = 0
 const pendingAction = ref<string | null>(null)
 const history = ref<Point[]>(offlineFrames())
 const state = ref<State>({ ...history.value[0], speed: 1, mode: 0, nodeCount: 1, recordedFrameCount: history.value.length, recordedEndAge: 30 })
@@ -149,6 +152,36 @@ function receive(payload: Record<string, unknown>) {
     log(`Edit synchronized: revision ${asNumber(payload.revision)}, mesh ${asNumber(payload.meshVersion)}`, 'ok')
     return
   }
+  if (payload.type === 'persistence.preset' && payload.preset && typeof payload.preset === 'object') {
+    downloadJson('plantsim-preset.json', payload.preset)
+    clearConfirmation()
+    log('植物与环境预设已保存。', 'ok')
+    return
+  }
+  if (payload.type === 'persistence.scene' && payload.scene && typeof payload.scene === 'object') {
+    downloadJson('plantsim-scene.json', payload.scene)
+    clearConfirmation()
+    log('完整场景归档已保存。', 'ok')
+    return
+  }
+  if (payload.type === 'persistence.obj') {
+    const obj = typeof payload.obj === 'string' ? payload.obj : ''
+    const mtl = typeof payload.mtl === 'string' ? payload.mtl : ''
+    if (obj && mtl) {
+      downloadText(String(payload.mtlFileName ?? 'plantsim_scene.mtl'), mtl)
+      downloadText(String(payload.objFileName ?? 'plantsim_scene.obj'), obj)
+      clearConfirmation()
+      log(`已导出完整 OBJ/MTL 场景（枝干 ${asNumber(payload.branchTriangles)}、叶片 ${asNumber(payload.leafTriangles)} 个三角形）。`, 'ok')
+    }
+    return
+  }
+  if (payload.type === 'persistence.updated') {
+    clearConfirmation()
+    send({ type: 'request_growth_data' })
+    const action = String(payload.action ?? 'scene_updated')
+    log(`场景持久化操作完成：${action}。`, 'ok')
+    return
+  }
   if (payload.type === 'growth_state') {
     // Seek/stage responses carry a complete plant state and must be applied at
     // once; ordinary high-frequency metric broadcasts are merged per paint.
@@ -158,6 +191,7 @@ function receive(payload: Record<string, unknown>) {
 }
 
 function nextEditRequestId() { editRequestId += 1; return `edit-${editRequestId}` }
+function nextPersistenceRequestId() { persistenceRequestId += 1; return `persistence-${persistenceRequestId}` }
 function sendEditBegin(payload: { nodeId: number; tool: string }) {
   if (!send({ type: 'edit.begin', requestId: nextEditRequestId(), plantId: 1, nodeId: payload.nodeId, mode: 'node', tool: payload.tool })) log('Edit command was not sent because the engine is offline.', 'warn')
 }
@@ -198,6 +232,25 @@ function commitChartSeek(target: number) {
   else log(`\u5df2\u4ece\u56fe\u8868\u5b9a\u4f4d\u5230 ${target.toFixed(2)} \u5e74\u3002`, 'ok')
 }
 function exportData(kind: 'json' | 'csv') { downloadGrowthExport(makeGrowthExport(kind, history.value)); log(`\u5df2\u5bfc\u51fa\u751f\u957f\u6307\u6807 ${kind.toUpperCase()}\u3002`, 'ok') }
+function requestPresetSave() {
+  if (send({ type: 'persistence.preset.request', requestId: nextPersistenceRequestId() })) awaitConfirmation('保存预设')
+}
+function importPreset(preset: Record<string, unknown>) {
+  if (send({ type: 'persistence.preset.import', requestId: nextPersistenceRequestId(), preset })) awaitConfirmation('载入预设')
+}
+function requestSceneSave() {
+  if (send({ type: 'persistence.scene.request', requestId: nextPersistenceRequestId() })) awaitConfirmation('保存场景')
+}
+function importScene(scene: Record<string, unknown>) {
+  if (send({ type: 'persistence.scene.import', requestId: nextPersistenceRequestId(), scene })) awaitConfirmation('载入场景')
+}
+function restoreSceneAtCurrentAge() {
+  if (send({ type: 'persistence.scene.restore', requestId: nextPersistenceRequestId(), age: age.value })) awaitConfirmation('恢复时间点')
+}
+function requestObjExport() {
+  if (send({ type: 'persistence.obj.request', requestId: nextPersistenceRequestId() })) awaitConfirmation('导出 OBJ/MTL')
+}
+function persistenceError(message: string) { log(`文件载入失败：${message}`, 'warn') }
 onMounted(() => { localSeek(0); connect(true) }); onBeforeUnmount(() => { if (growthStateFrame) cancelAnimationFrame(growthStateFrame); stopOfflinePlayback(); clearConfirmation(); dispose() })
 </script>
 
@@ -205,7 +258,7 @@ onMounted(() => { localSeek(0); connect(true) }); onBeforeUnmount(() => { if (gr
   <div class="week12-shell">
     <header class="week12-header"><div><p class="eyebrow">WEEK 12 · GROWTH DATA LAB</p><h1>生长数据记录与回放</h1><p>逐时间步保存植物状态，回放生长过程并追踪结构指标变化。</p><p class="connection-note" aria-live="polite">{{ connectionNote }}</p></div><div class="header-actions"><span class="chip" :class="connection" role="status"><i></i>{{ label }}</span><button type="button" class="ghost" @click="connect(true)">重新连接</button></div></header>
     <section class="metrics"><article class="stat accent"><span>生长年龄</span><strong>{{ state.age.toFixed(2) }}<small> 年</small></strong><em>{{ state.lifeStage }}</em></article><article class="stat"><span>植物高度</span><strong>{{ current.height.toFixed(2) }}<small> m</small></strong><em>HEIGHT</em></article><article class="stat"><span>枝干总长度</span><strong>{{ current.totalBranchLength.toFixed(1) }}<small> m</small></strong><em>BRANCH LENGTH</em></article><article class="stat"><span>分枝 / 叶片</span><strong>{{ current.branchCount }}<small> / {{ current.leafCount }}</small></strong><em>STRUCTURE</em></article><article class="stat"><span>冠幅</span><strong>{{ current.canopyWidth.toFixed(2) }}<small> m</small></strong><em>CANOPY WIDTH</em></article></section>
-    <main class="main-grid"><section class="card viewport-card"><header><span>01</span><h2>植物生长预览</h2><b>{{ playing ? 'REPLAYING' : 'PAUSED' }}</b></header><PlantViewport :light-intensity="light" :wind-intensity="wind" :playing="playing" plant-type="cherry" :interaction-mode="tool" :reset-token="resetToken" :snapshot="state.plantState" :growth-progress="viewportGrowthProgress"/><footer><div class="tools"><button type="button" :class="{ active: tool === 'select' }" :aria-pressed="tool === 'select'" @click="tool = 'select'">选择</button><button type="button" :class="{ active: tool === 'orbit' }" :aria-pressed="tool === 'orbit'" @click="tool = 'orbit'">旋转</button><button type="button" :class="{ active: tool === 'wind' }" :aria-pressed="tool === 'wind'" @click="tool = 'wind'">风场</button></div><label>光照 <input type="range" min="0" max="1" step=".01" :value="light" @input="setLight"/></label><button type="button" class="ghost" @click="resetToken += 1">复位视角</button></footer></section><MetricsPanel :recorded-frame-count="state.recordedFrameCount" :recorded-end-age="state.recordedEndAge" :speed="speed" :node-count="state.nodeCount" @speed-change="setSpeed" @export="exportData"/><PlantEditPanel :snapshot="state.plantState" :connected="isEngineConnected" :can-undo="editCanUndo" @begin="sendEditBegin" @update="sendEditUpdate" @commit="sendEditCommit" @undo="undoEdit" @reset="resetPlantEdit"/></main>
+    <main class="main-grid"><section class="card viewport-card"><header><span>01</span><h2>植物生长预览</h2><b>{{ playing ? 'REPLAYING' : 'PAUSED' }}</b></header><PlantViewport :light-intensity="light" :wind-intensity="wind" :playing="playing" plant-type="cherry" :interaction-mode="tool" :reset-token="resetToken" :snapshot="state.plantState" :growth-progress="viewportGrowthProgress"/><footer><div class="tools"><button type="button" :class="{ active: tool === 'select' }" :aria-pressed="tool === 'select'" @click="tool = 'select'">选择</button><button type="button" :class="{ active: tool === 'orbit' }" :aria-pressed="tool === 'orbit'" @click="tool = 'orbit'">旋转</button><button type="button" :class="{ active: tool === 'wind' }" :aria-pressed="tool === 'wind'" @click="tool = 'wind'">风场</button></div><label>光照 <input type="range" min="0" max="1" step=".01" :value="light" @input="setLight"/></label><button type="button" class="ghost" @click="resetToken += 1">复位视角</button></footer></section><MetricsPanel :recorded-frame-count="state.recordedFrameCount" :recorded-end-age="state.recordedEndAge" :speed="speed" :node-count="state.nodeCount" @speed-change="setSpeed" @export="exportData"/><PlantEditPanel :snapshot="state.plantState" :connected="isEngineConnected" :can-undo="editCanUndo" @begin="sendEditBegin" @update="sendEditUpdate" @commit="sendEditCommit" @undo="undoEdit" @reset="resetPlantEdit"/><PersistencePanel :connected="isEngineConnected" :busy="!!pendingAction" :age="age" @save-preset="requestPresetSave" @import-preset="importPreset" @save-scene="requestSceneSave" @import-scene="importScene" @restore-scene="restoreSceneAtCurrentAge" @export-obj="requestObjExport" @error="persistenceError"/></main>
     <GrowthTimeline :age="age" :max-age="maxAge" :progress="progress" :playing="playing" :pending="!!pendingAction" :at-latest="atLatest" :stages="stages" @toggle="toggle" @preview="previewSeek" @seek="commitSeek" @reset="reset" @latest="jumpToLatest" @stage="stage"/>
     <GrowthChart :history="history" :metric="metric" :metric-names="names" :current-value="current[metric]" :age="age" :max-age="maxAge" :stages="stages" @update:metric="metric = $event" @seek="commitChartSeek"/>
     <ReplayEventLog :logs="logs"/>

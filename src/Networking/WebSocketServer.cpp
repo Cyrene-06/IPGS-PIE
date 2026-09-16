@@ -175,6 +175,101 @@ void WebSocketServer::initializeCommandHandlers() {
     commandHandlers_.insert(QStringLiteral("request_growth_data"), [this](QWebSocket*, const QJsonObject&) {
         emit growthDataRequested();
     });
+    commandHandlers_.insert(QStringLiteral("persistence.preset.request"), [this](QWebSocket* socket, const QJsonObject& command) {
+        if (!simulationEngine_) {
+            sendError(socket, QStringLiteral("engine_unavailable"), QStringLiteral("Simulation engine is not configured."));
+            return;
+        }
+        sendJson(socket, QJsonDocument(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("persistence.preset")},
+            {QStringLiteral("protocolVersion"), kProtocolVersion},
+            {QStringLiteral("requestId"), command.value(QStringLiteral("requestId"))},
+            {QStringLiteral("preset"), simulationEngine_->createPreset()}
+        }).toJson(QJsonDocument::Compact));
+    });
+    commandHandlers_.insert(QStringLiteral("persistence.preset.import"), [this](QWebSocket* socket, const QJsonObject& command) {
+        QString error;
+        if (!simulationEngine_ || !command.value(QStringLiteral("preset")).isObject() ||
+            !simulationEngine_->applyPreset(command.value(QStringLiteral("preset")).toObject(), &error)) {
+            sendError(socket, QStringLiteral("preset_import_failed"),
+                      error.isEmpty() ? QStringLiteral("A valid preset object is required.") : error);
+            return;
+        }
+        sendJson(socket, QJsonDocument(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("persistence.updated")},
+            {QStringLiteral("protocolVersion"), kProtocolVersion},
+            {QStringLiteral("requestId"), command.value(QStringLiteral("requestId"))},
+            {QStringLiteral("action"), QStringLiteral("preset_imported")},
+            {QStringLiteral("age"), simulationEngine_->growthClock().timeline().currentAge()}
+        }).toJson(QJsonDocument::Compact));
+    });
+    commandHandlers_.insert(QStringLiteral("persistence.scene.request"), [this](QWebSocket* socket, const QJsonObject& command) {
+        if (!simulationEngine_) {
+            sendError(socket, QStringLiteral("engine_unavailable"), QStringLiteral("Simulation engine is not configured."));
+            return;
+        }
+        sendJson(socket, QJsonDocument(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("persistence.scene")},
+            {QStringLiteral("protocolVersion"), kProtocolVersion},
+            {QStringLiteral("requestId"), command.value(QStringLiteral("requestId"))},
+            {QStringLiteral("scene"), simulationEngine_->createSceneArchive()}
+        }).toJson(QJsonDocument::Compact));
+    });
+    commandHandlers_.insert(QStringLiteral("persistence.scene.import"), [this](QWebSocket* socket, const QJsonObject& command) {
+        QString error;
+        float age = -1.0f;
+        if (command.contains(QStringLiteral("age")) &&
+            (!readFiniteFloat(command.value(QStringLiteral("age")), &age) || age < 0.0f)) {
+            sendError(socket, QStringLiteral("scene_import_failed"),
+                      QStringLiteral("Optional scene import age must be a non-negative finite number."));
+            return;
+        }
+        if (!simulationEngine_ || !command.value(QStringLiteral("scene")).isObject() ||
+            !simulationEngine_->restoreSceneArchive(command.value(QStringLiteral("scene")).toObject(), age, &error)) {
+            sendError(socket, QStringLiteral("scene_import_failed"),
+                      error.isEmpty() ? QStringLiteral("A valid scene archive is required.") : error);
+            return;
+        }
+        sendJson(socket, QJsonDocument(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("persistence.updated")},
+            {QStringLiteral("protocolVersion"), kProtocolVersion},
+            {QStringLiteral("requestId"), command.value(QStringLiteral("requestId"))},
+            {QStringLiteral("action"), QStringLiteral("scene_imported")},
+            {QStringLiteral("age"), simulationEngine_->growthClock().timeline().currentAge()}
+        }).toJson(QJsonDocument::Compact));
+    });
+    commandHandlers_.insert(QStringLiteral("persistence.scene.restore"), [this](QWebSocket* socket, const QJsonObject& command) {
+        QString error;
+        float age = 0.0f;
+        if (!readFiniteFloat(command.value(QStringLiteral("age")), &age) || age < 0.0f ||
+            !simulationEngine_ || !simulationEngine_->restoreRecordedScene(age, &error)) {
+            sendError(socket, QStringLiteral("scene_restore_failed"),
+                      error.isEmpty() ? QStringLiteral("A non-negative restore age is required.") : error);
+            return;
+        }
+        sendJson(socket, QJsonDocument(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("persistence.updated")},
+            {QStringLiteral("protocolVersion"), kProtocolVersion},
+            {QStringLiteral("requestId"), command.value(QStringLiteral("requestId"))},
+            {QStringLiteral("action"), QStringLiteral("scene_restored")},
+            {QStringLiteral("age"), simulationEngine_->growthClock().timeline().currentAge()}
+        }).toJson(QJsonDocument::Compact));
+    });
+    commandHandlers_.insert(QStringLiteral("persistence.obj.request"), [this](QWebSocket* socket, const QJsonObject& command) {
+        QString error;
+        const QJsonObject bundle = simulationEngine_ ? simulationEngine_->createSceneExportBundle(&error)
+                                                     : QJsonObject{};
+        if (bundle.isEmpty()) {
+            sendError(socket, QStringLiteral("scene_export_failed"),
+                      error.isEmpty() ? QStringLiteral("Simulation engine is not configured.") : error);
+            return;
+        }
+        QJsonObject response = bundle;
+        response.insert(QStringLiteral("type"), QStringLiteral("persistence.obj"));
+        response.insert(QStringLiteral("protocolVersion"), kProtocolVersion);
+        response.insert(QStringLiteral("requestId"), command.value(QStringLiteral("requestId")));
+        sendJson(socket, QJsonDocument(response).toJson(QJsonDocument::Compact));
+    });
     commandHandlers_.insert(QStringLiteral("edit.begin"), [this](QWebSocket* socket, const QJsonObject& command) {
         int nodeId = -1;
         QString error;

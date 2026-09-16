@@ -15,6 +15,7 @@ PlantSim 将程序化植物建模、环境约束和生长过程记录整合为�
 - **引擎互联**：Qt WebSocket 服务监听 `ws://127.0.0.1:4317`，在 C++ 引擎与浏览器控制台之间传输环境、播放控制和生长指标数据。
 - **PBD 植物物理（第 13 周）**：每个植物节点对应一个质量点，对枝干长度、弯曲和分枝夹角进行位置约束求解；提供固定根节点、风力驱动、误差统计与 OpenGL 调试可视化。
 - **交互式编辑（第 14 周）**：射线拾取与节点选择，缩放 / 弯曲 / 旋转 / 参数四类编辑工具，编辑后自动重建 PBD、Metaball 与网格，并支持撤销、重置和 WebSocket 状态同步。
+- **场景持久化（第 16 周）**：保存/载入植物与环境预设、完整场景归档和记录点恢复；导出包含枝干、叶片与材质的 OBJ/MTL，并在 Web 控制台提供文件入口。
 
 ## 系统架构
 
@@ -181,7 +182,7 @@ plantState: PlantModel::toJson() 完整快照
 │   ├── src/App.vue                    # 生长数据实验台 UI
 │   ├── src/components/PlantViewport.vue
 │   └── scripts/websocket-smoke.mjs
-├── docs/                              # 第 4 周至第 14 周周报及后续开发计划
+├── docs/                              # 第 4 周起周报及后续开发计划
 ├── examples/                          # 示例骨架、网格和导出物
 └── schemas/                           # JSON Schema
 ```
@@ -197,6 +198,7 @@ plantState: PlantModel::toJson() 完整快照
 | Marching Cubes 网格 | `marching_cubes_cherry_mesh.json`、`marching_cubes_cherry.obj` | `marching_cubes_mesh.schema.json` |
 | 植物模型导出 | `plant_cherry_export.json`、`plant_cherry_lod*.obj/.mtl` | `plant_model_export.schema.json` |
 | 生长时间轴 | `growth_timeline_*.json`、`growth_report_*.json` | `growth_timeline.schema.json` |
+| 预设与场景归档 | 由 Web 控制台保存/载入 | `plant_preset.schema.json`、`scene_archive.schema.json` |
 
 ## 环境与构建
 
@@ -320,6 +322,7 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 | 第 12 周 | 生长数据记录与回放 | 完整状态帧、时间轴回放、指标曲线、数据导出 |
 | 第 13 周 | 植物物理模型 | 质量点、长度/弯曲/夹角约束、调试模式 |
 | 第 14 周 | 交互式编辑 | 射线拾取、缩放/弯曲/旋转/参数工具、网格重建、撤销与重置 |
+| 第 16 周 | 数据持久化与场景管理 | 预设/场景保存载入、记录点恢复、完整 OBJ/MTL 导出 |
 
 ## 文档
 
@@ -338,3 +341,4 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 - [第 12 周：生长数据记录与回放](docs/第12周-生长数据记录与回放.md)
 - [第 13 周：植物物理模型](docs/第13周-植物物理模型.md)
 - [第 14 周：交互式编辑](docs/week14-report.md)
+- [第 16 周：数据持久化与场景管理](docs/第16周-数据持久化与场景管理.md)
