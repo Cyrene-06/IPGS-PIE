@@ -60,7 +60,11 @@ public:
     QJsonObject toJson() const;
     // Lightweight archive is intended for the browser chart and downloads.
     QJsonObject metricsToJson() const;
+    static bool fromJson(const QJsonObject& json, GrowthDataRecorder* output,
+                         QString* error = nullptr);
     bool saveJson(const QString& filePath, QString* error = nullptr) const;
+    static bool loadJson(const QString& filePath, GrowthDataRecorder* output,
+                         QString* error = nullptr);
     bool saveCsv(const QString& filePath, QString* error = nullptr) const;
 
 private:

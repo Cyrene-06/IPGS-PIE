@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plantsim.local/schemas/scene_archive.schema.json",
+  "title": "PlantSim Scene Archive",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "preset", "recording", "events", "keyframes", "state"],
+  "properties": {
+    "schema": { "const": "plantsim.scene" },
+    "version": { "const": 1 },
+    "preset": { "$ref": "plant_preset.schema.json" },
+    "recording": {
+      "type": "object",
+      "required": ["schema", "version", "frameCount", "snapshotFrameCount", "snapshotIntervalFrames", "frames"],
+      "properties": {
+        "schema": { "const": "plantsim.growth_recording" },
+        "version": { "const": 2 },
+        "frameCount": { "type": "integer", "minimum": 0 },
+        "snapshotFrameCount": { "type": "integer", "minimum": 0 },
+        "snapshotIntervalFrames": { "type": "integer", "minimum": 1 },
+        "frames": { "type": "array", "items": { "$ref": "#/$defs/frame" } }
+      }
+    },
+    "events": { "type": "array", "items": { "type": "object" } },
+    "keyframes": { "type": "object" },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["age", "playbackMode", "speed", "editRevision", "meshVersion"],
+      "properties": {
+        "age": { "type": "number", "minimum": 0 },
+        "playbackMode": { "enum": ["realtime", "step", "paused", "completed"] },
+        "speed": { "type": "number", "minimum": 0.1, "maximum": 8 },
+        "editRevision": { "type": "integer", "minimum": 0 },
+        "meshVersion": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "frame": {
+      "type": "object",
+      "required": ["step", "age", "lifeStage", "metrics"],
+      "properties": {
+        "step": { "type": "integer", "minimum": 0 },
+        "age": { "type": "number", "minimum": 0 },
+        "lifeStage": { "enum": ["seed", "seedling", "vegetative", "mature", "flowering", "dormant", "senescent"] },
+        "metrics": {
+          "type": "object",
+          "required": ["height", "totalBranchLength", "branchCount", "leafCount", "canopyWidth"],
+          "properties": {
+            "height": { "type": "number", "minimum": 0 },
+            "totalBranchLength": { "type": "number", "minimum": 0 },
+            "branchCount": { "type": "integer", "minimum": 0 },
+            "leafCount": { "type": "integer", "minimum": 0 },
+            "canopyWidth": { "type": "number", "minimum": 0 }
+          }
+        },
+        "plantState": { "$ref": "plant_skeleton.schema.json" }
+      }
+    }
+  }
+}

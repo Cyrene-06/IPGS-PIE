@@ -184,6 +184,80 @@ QJsonObject GrowthDataRecorder::metricsToJson() const {
     };
 }
 
+bool GrowthDataRecorder::fromJson(const QJsonObject& json, GrowthDataRecorder* output,
+                                  QString* error) {
+    if (!output) {
+        setError(error, QStringLiteral("Output GrowthDataRecorder pointer is null."));
+        return false;
+    }
+    if (json.value(QStringLiteral("schema")).toString() != QStringLiteral("plantsim.growth_recording") ||
+        json.value(QStringLiteral("version")).toInt(-1) != 2) {
+        setError(error, QStringLiteral("Unsupported or missing growth recording schema."));
+        return false;
+    }
+    const QJsonValue framesValue = json.value(QStringLiteral("frames"));
+    if (!framesValue.isArray()) {
+        setError(error, QStringLiteral("Growth recording frames must be an array."));
+        return false;
+    }
+
+    GrowthDataRecorder parsed;
+    const int snapshotInterval = json.value(QStringLiteral("snapshotIntervalFrames")).toInt(
+        static_cast<int>(kDefaultSnapshotInterval));
+    if (snapshotInterval <= 0) {
+        setError(error, QStringLiteral("snapshotIntervalFrames must be positive."));
+        return false;
+    }
+    parsed.snapshotInterval_ = static_cast<std::size_t>(snapshotInterval);
+    float previousAge = -1.0f;
+    int expectedStep = 0;
+    for (const QJsonValue& value : framesValue.toArray()) {
+        if (!value.isObject()) {
+            setError(error, QStringLiteral("Every growth frame must be an object."));
+            return false;
+        }
+        const QJsonObject object = value.toObject();
+        const QJsonObject metrics = object.value(QStringLiteral("metrics")).toObject();
+        GrowthDataFrame frame;
+        frame.step = object.value(QStringLiteral("step")).toInt(-1);
+        frame.age = static_cast<float>(object.value(QStringLiteral("age")).toDouble(-1.0));
+        frame.lifeStage = plantLifeStageFromString(object.value(QStringLiteral("lifeStage")).toString());
+        frame.metrics.height = static_cast<float>(metrics.value(QStringLiteral("height")).toDouble(-1.0));
+        frame.metrics.totalBranchLength = static_cast<float>(metrics.value(QStringLiteral("totalBranchLength")).toDouble(-1.0));
+        frame.metrics.branchCount = metrics.value(QStringLiteral("branchCount")).toInt(-1);
+        frame.metrics.leafCount = metrics.value(QStringLiteral("leafCount")).toInt(-1);
+        frame.metrics.canopyWidth = static_cast<float>(metrics.value(QStringLiteral("canopyWidth")).toDouble(-1.0));
+        if (frame.step != expectedStep || !std::isfinite(frame.age) || frame.age < previousAge ||
+            !std::isfinite(frame.metrics.height) || frame.metrics.height < 0.0f ||
+            !std::isfinite(frame.metrics.totalBranchLength) || frame.metrics.totalBranchLength < 0.0f ||
+            frame.metrics.branchCount < 0 || frame.metrics.leafCount < 0 ||
+            !std::isfinite(frame.metrics.canopyWidth) || frame.metrics.canopyWidth < 0.0f) {
+            setError(error, QStringLiteral("Growth frame %1 contains invalid or unordered data.").arg(expectedStep));
+            return false;
+        }
+        if (object.value(QStringLiteral("plantState")).isObject()) {
+            frame.plantState = object.value(QStringLiteral("plantState")).toObject();
+            PlantModel validated;
+            QString validationError;
+            if (!PlantModel::fromJson(frame.plantState, &validated, &validationError)) {
+                setError(error, QStringLiteral("Growth frame %1 has an invalid plant state: %2")
+                                   .arg(expectedStep).arg(validationError));
+                return false;
+            }
+        }
+        parsed.frames_.push_back(std::move(frame));
+        previousAge = parsed.frames_.back().age;
+        ++expectedStep;
+    }
+    parsed.rebuildSnapshotIndex();
+    if (!parsed.frames_.empty() && parsed.snapshotIndices_.empty()) {
+        setError(error, QStringLiteral("A non-empty growth recording requires at least one plant snapshot."));
+        return false;
+    }
+    *output = std::move(parsed);
+    return true;
+}
+
 bool GrowthDataRecorder::saveJson(const QString& filePath, QString* error) const {
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -192,6 +266,22 @@ bool GrowthDataRecorder::saveJson(const QString& filePath, QString* error) const
     }
     file.write(QJsonDocument(toJson()).toJson(QJsonDocument::Indented));
     return true;
+}
+
+bool GrowthDataRecorder::loadJson(const QString& filePath, GrowthDataRecorder* output,
+                                  QString* error) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        setError(error, QStringLiteral("Cannot open growth recording: %1").arg(file.errorString()));
+        return false;
+    }
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        setError(error, QStringLiteral("Invalid growth recording JSON: %1").arg(parseError.errorString()));
+        return false;
+    }
+    return fromJson(document.object(), output, error);
 }
 
 bool GrowthDataRecorder::saveCsv(const QString& filePath, QString* error) const {

@@ -32,6 +32,14 @@ struct ObjMeshGroup {
 
 class MeshExporter {
 public:
+    // Serialize a complete OBJ/MTL pair for browser downloads or in-memory tests.
+    static bool serializeObj(const QString& baseName,
+                             const std::vector<ObjMaterial>& materials,
+                             const std::vector<ObjMeshGroup>& groups,
+                             QString* objText,
+                             QString* mtlText,
+                             QString* error = nullptr);
+
     // 写出 objPath 及同名 .mtl。materials 至少包含一个材质。
     static bool saveObj(const QString& objPath,
                         const std::vector<ObjMaterial>& materials,

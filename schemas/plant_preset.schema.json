@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plantsim.local/schemas/plant_preset.schema.json",
+  "title": "PlantSim Plant and Environment Preset",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "plantProgram", "plant", "initialPlant", "environment", "growthTimeline", "physics"],
+  "properties": {
+    "schema": { "const": "plantsim.preset" },
+    "version": { "const": 1 },
+    "plantProgram": { "type": "string" },
+    "plant": { "$ref": "plant_skeleton.schema.json" },
+    "initialPlant": { "$ref": "plant_skeleton.schema.json" },
+    "environment": { "$ref": "environment.schema.json" },
+    "growthTimeline": { "$ref": "growth_timeline.schema.json" },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "debugEnabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "debugEnabled": { "type": "boolean" }
+      }
+    }
+  }
+}
